@@ -16,10 +16,10 @@ The modeled sequence is:
 1. OMP discovers Figma's OAuth authorization and registration endpoints.
 2. OMP attempts RFC 7591 dynamic client registration as `oh-my-pi`.
 3. Figma rejects registration for an unapproved client (`403`).
-4. A valid static/public client identity is obtained from provider metadata or an earlier configuration step.
+4. The confirmed historical setup registers a fresh client with Figma using the allowlisted `Codex` client identity.
 5. OMP authorizes with that configured client identity and PKCE.
 
-Current OMP 17.3.4 does not automatically continue from a definitive `403 unapproved_client`: it records the rejection and asks the operator to configure `oauth.clientId`. The offline model intentionally demonstrates the separate historical fallback hypothesis without making a live request.
+Current OMP 17.3.4 does not automatically continue from a definitive `403 unapproved_client`: it records the rejection and asks the operator to configure `oauth.clientId`. The offline model demonstrates the separately confirmed DCR step without making a live request.
 
 The important policy question is whether Figma binds that client identity tightly enough to the actual application, or only blocks dynamic registration.
 
