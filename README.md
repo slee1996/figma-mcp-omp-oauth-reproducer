@@ -30,7 +30,40 @@ The extracted compatibility seam in `src/omp-figma-compat.ts` comes from the ins
 - `src/mcp/oauth-flow.ts`
 - `src/mcp/oauth-discovery.ts`
 
-One correction to the earlier reconstruction: the current OMP source does **not** parse a client ID out of the Figma `403` body. It records the `403 unapproved_client` result and emits a manual `oauth.clientId` configuration hint. Separately, its OAuth discovery code accepts provider metadata fields such as `public_client_id` and `default_client_id`. The historical setup may have used that metadata or a one-off local patch; this repository preserves the actual compatibility logic without claiming the 403 itself supplied the ID.
+One correction to the earlier reconstruction: the current OMP source does **not** parse a client ID out of the Figma `403` body. It records the `403 unapproved_client` result and emits a manual `oauth.clientId` configuration hint. Separately, its OAuth discovery code accepts provider metadata fields such as `public_client_id` and `default_client_id`.
+
+## Confirmed provenance of the configured client
+
+The original setup was reconstructed from the OMP session recorded on 2026-08-08.
+
+The client identity was **not** extracted from the `403` response and was not copied from Codex's static config. The setup session did this:
+
+1. Attempted `codex mcp login figma`.
+2. Attempted an OMP authorization using a Codex-issued identity, but token exchange failed because the matching secret was not available.
+3. Called Figma's dynamic registration endpoint:
+
+   ```text
+   POST https://api.figma.com/v1/oauth/mcp/register
+   ```
+
+   using the approved provider identity:
+
+   ```json
+   {
+     "client_name": "Codex",
+     "grant_types": ["authorization_code", "refresh_token"],
+     "response_types": ["code"],
+     "token_endpoint_auth_method": "client_secret_post"
+   }
+   ```
+
+4. Figma returned HTTP `200` with a fresh client ID and matching client secret.
+5. The session wrote those returned values into `~/.omp/agent/mcp.json` under `figma-readonly`.
+6. OMP completed authorization and connected successfully.
+
+The configured client ID matches the client ID recorded in that session. The values are intentionally omitted here.
+
+The technical provenance is therefore clear: **Figma issued the client credentials during DCR under the `Codex` client identity, and OMP subsequently used them.** That is different from Codex's local config supplying the credentials, and different from OMP having its own Figma-approved client registration.
 
 ## Run
 
