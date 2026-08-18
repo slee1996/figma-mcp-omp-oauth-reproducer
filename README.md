@@ -51,7 +51,81 @@ Sanitized shape:
 
 The client ID and secret must come from a legitimate provider-approved registration. Do not copy credentials from another application or commit them.
 
-## Hermes configuration shape
+## Authenticate Figma MCP with OMP
+
+The working OMP method was **static-client OAuth**, not automatic extraction from the `403` response.
+
+### 1. Obtain an approved client registration
+
+OMP first attempts dynamic registration as `oh-my-pi`. Figma rejects that with `403 Forbidden`. In the recorded demonstration, that approved identity was `Codex`; it must not be reused by another application without explicit provider authorization.
+
+The registration request shape was:
+
+```json
+{
+  "client_name": "[PROVIDER_APPROVED_CLIENT_NAME]",
+  "redirect_uris": ["http://127.0.0.1:[PORT]/callback/[PATH]"],
+  "grant_types": ["authorization_code", "refresh_token"],
+  "response_types": ["code"],
+  "token_endpoint_auth_method": "client_secret_post"
+}
+```
+
+The provider returned a client ID and secret. Keep both private. Do not use another application's identity unless the provider explicitly authorizes that arrangement.
+
+### 2. Put the returned values in OMP's config
+
+Edit:
+
+```text
+~/.omp/agent/mcp.json
+```
+
+Use the exact redirect URI registered with the provider:
+
+```json
+{
+  "mcpServers": {
+    "figma-readonly": {
+      "type": "http",
+      "url": "https://mcp.figma.com/mcp",
+      "oauth": {
+        "clientId": "[RETURNED_CLIENT_ID]",
+        "clientSecret": "[RETURNED_CLIENT_SECRET]",
+        "redirectUri": "http://127.0.0.1:[PORT]/callback/[PATH]",
+        "callbackPort": 58028,
+        "callbackPath": "/callback/[PATH]"
+      }
+    }
+  }
+}
+```
+
+Keep `clientId`, `clientSecret`, `redirectUri`, `callbackPort`, and `callbackPath` consistent. A redirect mismatch produces an OAuth error even when the client credentials are valid.
+
+### 3. Run OMP and complete normal OAuth
+
+Start OMP from the project directory:
+
+```sh
+omp
+```
+
+When the Figma server initializes, OMP builds a standard Authorization Code + PKCE flow with:
+
+- `response_type=code`
+- the configured `client_id`
+- the registered loopback `redirect_uri`
+- CSRF `state`
+- `code_challenge_method=S256`
+- the Figma MCP resource URL
+
+Complete Figma login and consent in the browser. OMP receives the loopback callback, exchanges the code using the configured client secret and PKCE verifier, stores its OAuth state locally, and connects `figma-readonly`.
+
+Verify with a read-only Figma MCP call. Do not print the authorization URL, code, access token, refresh token, or client secret in logs.
+
+This is the complete method represented by the extracted seam in `src/omp-figma-compat.ts`. The code documents resolution and PKCE construction; it intentionally does not contain a live registration response or credentials.
+
 
 Hermes stores MCP configuration at:
 
