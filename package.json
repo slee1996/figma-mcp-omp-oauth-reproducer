@@ -1,0 +1,8 @@
+{
+  "name": "figma-mcp-omp-oauth-reproducer",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test"
+  }
+}
