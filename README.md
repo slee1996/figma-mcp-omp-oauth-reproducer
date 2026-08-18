@@ -14,6 +14,15 @@ It does not contact Figma and contains no client IDs, client secrets, access tok
 
 The important policy question is whether Figma binds that client identity tightly enough to the actual application, or only blocks dynamic registration.
 
+## OMP source provenance
+
+The extracted compatibility seam in `src/omp-figma-compat.ts` comes from the installed `@oh-my-pi/pi-coding-agent` **17.3.4** sources:
+
+- `src/mcp/oauth-flow.ts`
+- `src/mcp/oauth-discovery.ts`
+
+One correction to the earlier reconstruction: the current OMP source does **not** parse a client ID out of the Figma `403` body. It records the `403 unapproved_client` result and emits a manual `oauth.clientId` configuration hint. Separately, its OAuth discovery code accepts provider metadata fields such as `public_client_id` and `default_client_id`. The historical setup may have used that metadata or a one-off local patch; this repository preserves the actual compatibility logic without claiming the 403 itself supplied the ID.
+
 ## Run
 
 ```sh
