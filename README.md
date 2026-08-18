@@ -1,76 +1,121 @@
-# Figma MCP / OMP OAuth compatibility reproducer
+# Figma MCP OAuth compatibility repro
 
-This is a **sanitized, offline reproducer** of the OAuth compatibility path observed while connecting oh-my-pi (OMP) to Figma MCP.
+A concise, sanitized record of the Figma MCP OAuth behavior observed with oh-my-pi (OMP) and Hermes.
 
-It does not contact Figma and contains no client IDs, client secrets, access tokens, refresh tokens, or redirect credentials.
+## Finding
 
-## Observed / modeled flow
+Figma's remote MCP endpoint is:
 
-The repository contains two related layers:
-
-- `src/omp-figma-compat.ts` is the extracted OMP compatibility seam.
-- `src/reproducer.mjs` is a small offline model of the historical setup hypothesis.
-
-The modeled sequence is:
-
-1. OMP discovers Figma's OAuth authorization and registration endpoints.
-2. OMP attempts RFC 7591 dynamic client registration as `oh-my-pi`.
-3. Figma rejects registration for an unapproved client (`403`).
-4. The confirmed historical setup registers a fresh client with Figma using the allowlisted `Codex` client identity.
-5. OMP authorizes with that configured client identity and PKCE.
-
-Current OMP 17.3.4 does not automatically continue from a definitive `403 unapproved_client`: it records the rejection and asks the operator to configure `oauth.clientId`. The offline model demonstrates the separately confirmed DCR step without making a live request.
-
-The important policy question is whether Figma binds that client identity tightly enough to the actual application, or only blocks dynamic registration.
-
-## OMP source provenance
-
-The extracted compatibility seam in `src/omp-figma-compat.ts` comes from the installed `@oh-my-pi/pi-coding-agent` **17.3.4** sources:
-
-- `src/mcp/oauth-flow.ts`
-- `src/mcp/oauth-discovery.ts`
-
-One correction to the earlier reconstruction: the current OMP source does **not** parse a client ID out of the Figma `403` body. It records the `403 unapproved_client` result and emits a manual `oauth.clientId` configuration hint. Separately, its OAuth discovery code accepts provider metadata fields such as `public_client_id` and `default_client_id`.
-
-## Confirmed provenance of the configured client
-
-The original setup was reconstructed from the OMP session recorded on 2026-08-08.
-
-The client identity was **not** extracted from the `403` response and was not copied from Codex's static config. The setup session did this:
-
-1. Attempted `codex mcp login figma`.
-2. Attempted an OMP authorization using a Codex-issued identity, but token exchange failed because the matching secret was not available.
-3. Called Figma's dynamic registration endpoint:
-
-   ```text
-   POST https://api.figma.com/v1/oauth/mcp/register
-   ```
-
-   using the approved provider identity:
-
-   ```json
-   {
-     "client_name": "Codex",
-     "grant_types": ["authorization_code", "refresh_token"],
-     "response_types": ["code"],
-     "token_endpoint_auth_method": "client_secret_post"
-   }
-   ```
-
-4. Figma returned HTTP `200` with a fresh client ID and matching client secret.
-5. The session wrote those returned values into `~/.omp/agent/mcp.json` under `figma-readonly`.
-6. OMP completed authorization and connected successfully.
-
-The configured client ID matches the client ID recorded in that session. The values are intentionally omitted here.
-
-The technical provenance is therefore clear: **Figma issued the client credentials during DCR under the `Codex` client identity, and OMP subsequently used them.** That is different from Codex's local config supplying the credentials, and different from OMP having its own Figma-approved client registration.
-
-## Run
-
-```sh
-node --test
+```text
+https://mcp.figma.com/mcp
 ```
 
-## Scope
+Live DCR results:
 
-This repository intentionally models the protocol behavior without implementing a live bypass. To test a real integration, use a client registration and redirect URI explicitly authorized by the provider.
+```text
+client_name: Hermes Agent  → HTTP 403 Forbidden
+client_name: Codex         → HTTP 200 + OAuth client credentials
+```
+
+OMP then connected successfully using a statically configured client identity. Hermes' native OAuth flow behaved the same way: dynamic registration was rejected, while a static client configuration advanced to the PKCE authorization URL.
+
+This points to a Figma registration-policy issue, not an MCP transport issue. MCP/OAuth supports both dynamic registration and pre-registered clients. `client_name` is client metadata, not cryptographic proof of the calling application.
+
+## OMP configuration shape
+
+OMP stores MCP configuration at:
+
+```text
+~/.omp/agent/mcp.json
+```
+
+Sanitized shape:
+
+```json
+{
+  "mcpServers": {
+    "figma-readonly": {
+      "type": "http",
+      "url": "https://mcp.figma.com/mcp",
+      "oauth": {
+        "clientId": "[PROVIDER_ISSUED_CLIENT_ID]",
+        "clientSecret": "[PROVIDER_ISSUED_CLIENT_SECRET]",
+        "redirectUri": "http://127.0.0.1:[PORT]/callback/[PATH]",
+        "callbackPort": 58028,
+        "callbackPath": "/callback/[PATH]"
+      }
+    }
+  }
+}
+```
+
+The client ID and secret must come from a legitimate provider-approved registration. Do not copy credentials from another application or commit them.
+
+## Hermes configuration shape
+
+Hermes stores MCP configuration at:
+
+```text
+~/.hermes/config.yaml
+```
+
+Its native static-client shape is:
+
+```yaml
+mcp_servers:
+  figma:
+    url: https://mcp.figma.com/mcp
+    auth: oauth
+    oauth:
+      client_id: "[PROVIDER_ISSUED_CLIENT_ID]"
+      client_secret: "[PROVIDER_ISSUED_CLIENT_SECRET]"
+      client_name: "[APPROVED_CLIENT_NAME]"
+      redirect_port: 0
+```
+
+Add and test the native server with:
+
+```sh
+hermes mcp add figma --url https://mcp.figma.com/mcp --auth oauth
+hermes mcp login figma
+hermes mcp test figma
+```
+
+The login step requires an interactive browser session. Never paste credentials or authorization codes into logs, tickets, or repositories.
+
+## Run the sanitized live DCR comparison
+
+This is a standalone, non-OMP probe. It sends only registration requests and discards any credential-shaped response fields:
+
+```sh
+node scripts/live-dcr-repro.mjs
+```
+
+Expected evidence is a provider-policy difference, not a successful bypass:
+
+```text
+Hermes Agent → 403 Forbidden
+Codex         → provider-dependent; redirect URI must also be accepted
+```
+
+## Repository layers
+
+- `scripts/live-dcr-repro.mjs` — live DCR comparison; no credentials persisted.
+- `src/reproducer.mjs` — offline model of rejected OMP registration followed by an approved static-client registration and PKCE.
+- `src/omp-figma-compat.ts` — extracted OMP compatibility seam from oh-my-pi 17.3.4.
+- `LIVE-REPRO.md` — detailed evidence and exact boundary of the safe reproduction.
+- `test/reproducer.test.mjs` — offline tests.
+
+## Security boundary
+
+This repository does **not** implement credential replay or claim that Codex credentials are transferable to Hermes. A complete cross-application transfer test requires explicit provider authorization. The reportable facts are:
+
+1. Hermes registration was rejected.
+2. An approved Codex registration returned credentials.
+3. Static OAuth configuration bypassed dynamic registration and reached normal PKCE authorization.
+
+Run tests with:
+
+```sh
+npm test
+```
