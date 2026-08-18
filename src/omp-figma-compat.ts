@@ -1,10 +1,6 @@
 /**
- * Extracted/adapted from oh-my-pi 17.3.4:
- *   src/mcp/oauth-flow.ts
- *   src/mcp/oauth-discovery.ts
- *
- * This file keeps only the provider-compatibility seam. It is not a drop-in
- * replacement for OMP's full OAuth implementation.
+ * Small, sanitized extraction of OMP 17.3.4's Figma OAuth seam.
+ * Not a replacement for OMP's full OAuth implementation.
  */
 
 export type OAuthMetadata = {
@@ -24,26 +20,28 @@ export type RegistrationFailure = {
   detail?: string
 }
 
-/** OMP's static-client resolution: config first, then client_id in the auth URL. */
-export function staticClientIdFromConfig(input: {
+/** Prefer configured identity; otherwise preserve one already in the auth URL. */
+export function staticClientIdFromConfig({
+  clientId,
+  authorizationUrl,
+}: {
   clientId?: string
   authorizationUrl: string
 }): string | undefined {
-  const fromConfig = input.clientId?.trim()
-  if (fromConfig) return fromConfig
+  const configured = clientId?.trim()
+  if (configured) return configured
 
   try {
-    return new URL(input.authorizationUrl).searchParams.get('client_id') ?? undefined
+    return new URL(authorizationUrl).searchParams.get('client_id') ?? undefined
   } catch {
     return undefined
   }
 }
 
-/**
- * OMP's metadata compatibility: accept the provider's common client-ID field
- * variants, including Figma's public/default-client forms.
- */
-export function clientIdFromMetadata(metadata: OAuthMetadata): string | undefined {
+/** Accept the client-ID names used by OAuth providers. */
+export function clientIdFromMetadata(
+  metadata: OAuthMetadata,
+): string | undefined {
   return (
     metadata.client_id ??
     metadata.clientId ??
@@ -52,32 +50,26 @@ export function clientIdFromMetadata(metadata: OAuthMetadata): string | undefine
   )
 }
 
-/** OMP records Figma's DCR rejection rather than treating it as a transient error. */
 export function recordRegistrationFailure(
   endpoint: string,
   status: number,
-  detail?: string
+  detail?: string,
 ): RegistrationFailure {
   return { endpoint, status, detail }
 }
 
-/**
- * OMP's definitive Figma check. HTTP 403 alone is intentionally insufficient;
- * the provider must identify the client as unapproved.
- */
+/** A bare 403 is not enough; OMP requires the provider's error detail too. */
 export function isDefinitiveRegistrationRejection(
-  failure?: RegistrationFailure
+  failure?: RegistrationFailure,
 ): boolean {
   return failure?.status === 403 && /\bunapproved_client\b/i.test(failure.detail ?? '')
 }
 
-/**
- * The manual fallback OMP tells the operator to use after Figma rejects DCR.
- * Credentials are deliberately supplied by the operator/configuration layer.
- */
-export function manualClientConfigHint(failure?: RegistrationFailure): string {
+export function manualClientConfigHint(
+  failure?: RegistrationFailure,
+): string {
   if (!failure) {
-    return 'Configure oauth.clientId (and oauth.clientSecret if required) in mcp.json.'
+    return 'Configure oauth.clientId and, if required, oauth.clientSecret in mcp.json.'
   }
 
   const outcome = failure.status
@@ -85,13 +77,21 @@ export function manualClientConfigHint(failure?: RegistrationFailure): string {
     : `network error${failure.detail ? ` — ${failure.detail}` : ''}`
 
   return (
-    `Dynamic client registration was rejected (POST ${failure.endpoint} → ${outcome}). ` +
-    'Configure oauth.clientId (and oauth.clientSecret if required) in mcp.json.'
+    `Dynamic client registration was rejected ` +
+    `(POST ${failure.endpoint} → ${outcome}). ` +
+    'Configure oauth.clientId and, if required, oauth.clientSecret in mcp.json.'
   )
 }
 
-/** OMP adds the resolved client_id to the authorization URL and uses PKCE. */
-export function buildAuthorizationUrl(input: {
+/** Build OMP's Authorization Code + PKCE URL. */
+export function buildAuthorizationUrl({
+  authorizationUrl,
+  clientId,
+  redirectUri,
+  state,
+  codeChallenge,
+  scopes,
+}: {
   authorizationUrl: string
   clientId: string
   redirectUri: string
@@ -99,13 +99,16 @@ export function buildAuthorizationUrl(input: {
   codeChallenge: string
   scopes?: string
 }): string {
-  const url = new URL(input.authorizationUrl)
-  url.searchParams.set('response_type', 'code')
-  url.searchParams.set('client_id', input.clientId)
-  url.searchParams.set('redirect_uri', input.redirectUri)
-  url.searchParams.set('state', input.state)
-  url.searchParams.set('code_challenge', input.codeChallenge)
-  url.searchParams.set('code_challenge_method', 'S256')
-  if (input.scopes) url.searchParams.set('scope', input.scopes)
+  const url = new URL(authorizationUrl)
+  const params = url.searchParams
+
+  params.set('response_type', 'code')
+  params.set('client_id', clientId)
+  params.set('redirect_uri', redirectUri)
+  params.set('state', state)
+  params.set('code_challenge', codeChallenge)
+  params.set('code_challenge_method', 'S256')
+  if (scopes) params.set('scope', scopes)
+
   return url.toString()
 }
